@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autourgos-hcix"
+version = "1.0.0"
+description = "Human Cognitive Interrupt middleware for Autourgos agents with global hotkey steering."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+authors = [
+    {name = "Jitin Kumar Sengar", email = "devxjitin@gmail.com"}
+]
+keywords = ["autourgos", "agent", "middleware", "human-in-the-loop", "interrupt", "hotkey", "hcix"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = []
+
+[project.optional-dependencies]
+hcix = ["pynput>=1.7.6"]
+
+[project.urls]
+Homepage = "https://github.com/devxjitin/autourgos-hcix"
+Repository = "https://github.com/devxjitin/autourgos-hcix"
+Issues = "https://github.com/devxjitin/autourgos-hcix/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["autourgos_hcix*"]
+
+[tool.setuptools.package-data]
+autourgos_hcix = ["py.typed"]

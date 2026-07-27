@@ -15,7 +15,7 @@ Long-running agents sometimes need live human steering:
 - **Pause for operator input** - wait while a person writes a corrective instruction
 - **Keep cleanup reliable** - unregister hotkey listeners when the run ends or errors
 
-`HcixInterruptMiddleware` is self-contained and has zero required runtime dependencies.
+`HcixInterruptMiddleware` depends on `autourgos-react-agent` (for the shared `CallbackHandler` interface).
 
 ---
 
@@ -37,9 +37,17 @@ Windows uses the native `RegisterHotKey` API. Tkinter is used for the desktop pr
 
 ## Quick Start
 
+`my_llm` is any chat-model instance, e.g. `OpenAIChatModel` from `autourgos-openaichat` (needs `OPENAI_API_KEY` set). `my_tool` is any plain callable used as an agent tool.
+
 ```python
 from autourgos_hcix import HcixInterruptMiddleware
 from autourgos_react_agent import ReactAgent
+from autourgos_openaichat import OpenAIChatModel
+
+my_llm = OpenAIChatModel(model="gpt-4o-mini")
+
+def my_tool(query: str) -> str:
+    return f"Result for: {query}"
 
 middleware = HcixInterruptMiddleware(shortcut="ctrl+shift+h")
 
@@ -55,6 +63,13 @@ print(result)
 ```
 
 During the run, press `ctrl+shift+h`, type the new instruction, then send it. HCIx injects an authoritative override block into the agent context.
+
+Because `verbose=True` is set above, HCIx also narrates the injection into the
+agent's verbose trace, for example:
+
+```
+[HCIx] Human override injected: 'Stop researching and summarize what you have so far.'
+```
 
 ---
 
@@ -131,7 +146,7 @@ HCIx uses standard Autourgos middleware hooks:
 | `on_iteration(iteration, thought, ...)` | Polls after an iteration event. In `autourgos-react-agent`, this injects the override for the following reasoning step. |
 | `on_agent_end` / `on_agent_error` | Stops hotkey listeners and logs total paused time. |
 
-The current `ReactAgent` keeps its scratchpad local to the loop, so HCIx injects into `agent.system_prompt` when no public scratchpad is available.
+As of `autourgos-react-agent>=1.6.0`, `agent.scratchpad` is a real, live instance attribute, so HCIx injects the override directly into it (in addition to `agent.system_prompt`) and the running agent picks it up on its very next LLM call.
 
 ---
 

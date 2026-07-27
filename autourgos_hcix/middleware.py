@@ -137,6 +137,10 @@ class HcixInterruptMiddleware(CallbackHandler):
             current = getattr(agent, "system_prompt")
             setattr(agent, "system_prompt", f"{current}\n\n{block}".strip())
 
+        logger = getattr(agent, "logger", None)
+        if logger:
+            logger.middleware("HCIx", f"Human override injected: {instruction[:80]!r}")
+
         return block
 
     def _restore_system_prompt(self, agent: Any) -> None:

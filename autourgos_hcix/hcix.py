@@ -4,6 +4,8 @@ hcix.py - Human Cognitive Interrupt manager.
 from __future__ import annotations
 
 import asyncio
+import itertools
+import logging
 import os
 import sys
 import threading
@@ -11,6 +13,26 @@ import time
 from enum import Enum
 from queue import Empty, Queue
 from typing import Any, Optional, Tuple
+
+_module_logger = logging.getLogger(__name__)
+
+# Base offset for app-defined hotkey IDs used by CognitiveInterruptManager
+# instances. Windows RegisterHotKey requires app-defined IDs to be in the
+# range 0x0000-0xBFFF. We reserve a window near the top of that range and
+# hand out a unique ID per instance from a shared counter so that multiple
+# managers running in the same process do not collide when calling
+# RegisterHotKey/UnregisterHotKey.
+_HOTKEY_ID_BASE = 0xB000
+_HOTKEY_ID_RANGE = 0x1000  # 0xB000-0xBFFF, entirely within the valid range
+_hotkey_id_counter = itertools.count()
+_hotkey_id_lock = threading.Lock()
+
+
+def _next_hotkey_id() -> int:
+    """Return a unique, process-wide hotkey ID for a new manager instance."""
+    with _hotkey_id_lock:
+        offset = next(_hotkey_id_counter)
+    return _HOTKEY_ID_BASE + (offset % _HOTKEY_ID_RANGE)
 
 try:
     import tkinter as tk
@@ -94,6 +116,7 @@ class CognitiveInterruptManager:
         self._listener_warning_emitted = False
         self._registration_error: Optional[str] = None
         self._hotkey_id: Optional[int] = None
+        self._instance_hotkey_id: int = _next_hotkey_id()
         self._listener: Any = None
 
         if enable_hotkey:
@@ -195,7 +218,7 @@ class CognitiveInterruptManager:
             self._registration_error = f"Invalid hcix shortcut {self.shortcut!r}: {exc}"
             return
 
-        hotkey_id = 0xC1A0
+        hotkey_id = self._instance_hotkey_id
         if not user32.RegisterHotKey(None, hotkey_id, modifiers, key_code):
             self._registration_error = f"Failed to register HCIx shortcut {self.shortcut!r}."
             return
@@ -543,10 +566,14 @@ class CognitiveInterruptManager:
             try:
                 listener.stop()
             except Exception:
-                pass
+                _module_logger.warning(
+                    "failed to stop hotkey listener cleanly", exc_info=True
+                )
 
     def __del__(self) -> None:
         try:
             self.stop()
         except Exception:
-            pass
+            _module_logger.warning(
+                "failed to stop HCIx hotkey listener during teardown", exc_info=True
+            )

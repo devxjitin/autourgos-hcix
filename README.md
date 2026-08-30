@@ -15,7 +15,7 @@ Long-running agents sometimes need live human steering:
 - **Pause for operator input** - wait while a person writes a corrective instruction
 - **Keep cleanup reliable** - unregister hotkey listeners when the run ends or errors
 
-`HcixInterruptMiddleware` depends on `autourgos-react-agent` (for the shared `CallbackHandler` interface).
+`HcixInterruptMiddleware` depends on `autourgos-agent` (for the shared `CallbackHandler` interface).
 
 ---
 
@@ -41,7 +41,7 @@ Windows uses the native `RegisterHotKey` API. Tkinter is used for the desktop pr
 
 ```python
 from autourgos_hcix import HcixInterruptMiddleware
-from autourgos_react_agent import ReactAgent
+from autourgos_agent import Agent
 from autourgos_openaichat import OpenAIChatModel
 
 my_llm = OpenAIChatModel(model="gpt-4o-mini")
@@ -51,7 +51,7 @@ def my_tool(query: str) -> str:
 
 middleware = HcixInterruptMiddleware(shortcut="ctrl+shift+h")
 
-agent = ReactAgent(
+agent = Agent(
     llm=my_llm,
     tools=[my_tool],
     middleware=[middleware],
@@ -79,9 +79,9 @@ agent's verbose trace, for example:
 import asyncio
 
 from autourgos_hcix import HcixInterruptMiddleware
-from autourgos_react_agent import ReactAgent
+from autourgos_agent import Agent
 
-agent = ReactAgent(
+agent = Agent(
     llm=my_llm,
     tools=[my_tool],
     middleware=[HcixInterruptMiddleware(shortcut="ctrl+alt+k")],
@@ -143,10 +143,10 @@ HCIx uses standard Autourgos middleware hooks:
 | Hook | Behavior |
 |---|---|
 | `on_iteration_start(iteration, agent=...)` | Polls before the next LLM call when the host agent exposes this hook. |
-| `on_iteration(iteration, thought, ...)` | Polls after an iteration event. In `autourgos-react-agent`, this injects the override for the following reasoning step. |
+| `on_iteration(iteration, thought, ...)` | Polls after an iteration event. In `autourgos-agent`, this injects the override for the following reasoning step. |
 | `on_agent_end` / `on_agent_error` | Stops hotkey listeners and logs total paused time. |
 
-As of `autourgos-react-agent>=1.6.0`, `agent.scratchpad` is a real, live instance attribute, so HCIx injects the override directly into it (in addition to `agent.system_prompt`) and the running agent picks it up on its very next LLM call.
+`agent.scratchpad` is a real, live instance attribute on `autourgos-agent`, so HCIx injects the override directly into it (in addition to `agent.system_prompt`) and the running agent picks it up on its very next LLM call.
 
 ---
 

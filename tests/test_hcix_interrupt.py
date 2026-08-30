@@ -2,7 +2,7 @@ import threading
 import unittest
 from unittest.mock import MagicMock
 
-from autourgos_react_agent.testing import make_test_agent
+from autourgos_agent.testing import make_test_agent
 
 from autourgos_hcix import (
     CognitiveInterruptManager,
@@ -99,7 +99,7 @@ class HcixInterruptTests(unittest.TestCase):
 
     def test_real_agent_scratchpad_actually_contains_injected_override(self):
         """
-        End-to-end against a real ReactAgent (make_test_agent): before
+        End-to-end against a real Agent (make_test_agent): before
         react-agent 1.6.0, agent.scratchpad was never a real attribute on a
         live agent, so this injection path silently never fired against a
         real agent (only against hand-rolled fakes that pre-set

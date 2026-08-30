@@ -87,7 +87,7 @@ class HcixInterruptMiddleware(CallbackHandler):
         """
         Poll when the host agent emits an iteration event.
 
-        ReactAgent emits this after a thought is produced, so injected
+        Agent emits this after a thought is produced, so injected
         instructions affect the following reasoning step there.
         """
         self._poll_and_inject(agent or kwargs.get("agent"))

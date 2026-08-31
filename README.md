@@ -1,19 +1,63 @@
 # autourgos-hcix
 
-Human Cognitive Interrupt (HCIx) middleware for [Autourgos](https://github.com/devxjitin) agents.
+[![Framework: Autourgos](https://img.shields.io/badge/Framework-Autourgos-orange.svg)](https://github.com/devxjitin)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://pypi.org/project/autourgos-hcix/)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green.svg)](https://github.com/devxjitin/autourgos-hcix/blob/main/LICENSE)
+[![Author](https://img.shields.io/badge/Author-Jitin%20Kumar%20Sengar-blue.svg)](https://github.com/devxjitin)
+[![Contributor](https://img.shields.io/badge/Contributor-Sonia-blueviolet.svg)]()
+[![Contributor](https://img.shields.io/badge/Contributor-Vishwanil%20Suman-blueviolet.svg)]()
 
-Press a global shortcut during a long-running agent task, type a high-priority instruction, and the middleware injects that instruction into the agent so the next reasoning step is steered by the human operator.
+Human Cognitive Interrupt (HCIx) middleware for [Autourgos](https://github.com/devxjitin) agents. Press a
+global shortcut during a long-running agent task, type a high-priority instruction, and the middleware
+injects it so the next reasoning step is steered by the human operator.
+
+```python
+from autourgos_hcix import HcixInterruptMiddleware
+from autourgos_agent import Agent
+from autourgos_openaichat import OpenAIChatModel
+
+middleware = HcixInterruptMiddleware(shortcut="ctrl+shift+h")
+agent = Agent(llm=OpenAIChatModel(model="gpt-4o-mini"), middleware=[middleware], verbose=True)
+result = agent.invoke("Research this task and keep working until you have a final answer.")
+```
 
 ---
 
-## Why use this?
+## Features
+
+- **Global-hotkey live steering** — interrupt a running agent, type a correction, and the next reasoning
+  step picks it up
+- **Programmatic interrupts** — submit an instruction without a keyboard, for tests, APIs, dashboards,
+  notebooks
+- **Human approval primitives** — `HumanInterrupt`, `HumanInterruptHandler`, `HumanStateEditor` for
+  worker-thread-blocks-until-a-human-decides workflows
+- **Native on Windows** (`RegisterHotKey`), `pynput` optional extra for Linux/macOS
+- **Cleanup guaranteed** — hotkey listeners unregister on run end or error
+
+---
+
+## Table of Contents
+
+- [Why Use This?](#why-use-this)
+- [Install](#install)
+- [Quick Start](#quick-start)
+- [Async Usage](#async-usage)
+- [Programmatic Interrupts](#programmatic-interrupts)
+- [Human Approval Primitives](#human-approval-primitives)
+- [Agent Hooks](#agent-hooks)
+- [Constructor Parameters](#constructor-parameters)
+- [License](#license)
+
+---
+
+## Why Use This?
 
 Long-running agents sometimes need live human steering:
 
-- **Stop drift** - redirect an agent when its current plan is no longer useful
-- **Inject new context** - add fresh information without restarting the run
-- **Pause for operator input** - wait while a person writes a corrective instruction
-- **Keep cleanup reliable** - unregister hotkey listeners when the run ends or errors
+- **Stop drift** — redirect an agent when its current plan is no longer useful
+- **Inject new context** — add fresh information without restarting the run
+- **Pause for operator input** — wait while a person writes a corrective instruction
+- **Keep cleanup reliable** — unregister hotkey listeners when the run ends or errors
 
 `HcixInterruptMiddleware` depends on `autourgos-agent` (for the shared `CallbackHandler` interface).
 
@@ -31,13 +75,15 @@ For global hotkey support on Linux/macOS, install the optional `pynput` extra:
 pip install 'autourgos-hcix[hcix]'
 ```
 
-Windows uses the native `RegisterHotKey` API. Tkinter is used for the desktop prompt when available; otherwise HCIx falls back to a console prompt.
+Windows uses the native `RegisterHotKey` API. Tkinter is used for the desktop prompt when available;
+otherwise HCIx falls back to a console prompt.
 
 ---
 
 ## Quick Start
 
-`my_llm` is any chat-model instance, e.g. `OpenAIChatModel` from `autourgos-openaichat` (needs `OPENAI_API_KEY` set). `my_tool` is any plain callable used as an agent tool.
+`my_llm` is any chat-model instance, e.g. `OpenAIChatModel` from `autourgos-openaichat` (needs
+`OPENAI_API_KEY` set). `my_tool` is any plain callable used as an agent tool.
 
 ```python
 from autourgos_hcix import HcixInterruptMiddleware
@@ -62,10 +108,9 @@ result = agent.invoke("Research this task and keep working until you have a fina
 print(result)
 ```
 
-During the run, press `ctrl+shift+h`, type the new instruction, then send it. HCIx injects an authoritative override block into the agent context.
-
-Because `verbose=True` is set above, HCIx also narrates the injection into the
-agent's verbose trace, for example:
+During the run, press `ctrl+shift+h`, type the new instruction, then send it. HCIx injects an authoritative
+override block into the agent context. With `verbose=True`, HCIx also narrates the injection into the
+agent's verbose trace:
 
 ```
 [HCIx] Human override injected: 'Stop researching and summarize what you have so far.'
@@ -94,13 +139,14 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-HCIx uses the same lifecycle hooks in sync and async agent runs. When the user is actively writing an interrupt, the hook waits until the instruction is submitted or cancelled.
+HCIx uses the same lifecycle hooks in sync and async agent runs. When the user is actively writing an
+interrupt, the hook waits until the instruction is submitted or cancelled.
 
 ---
 
 ## Programmatic Interrupts
 
-You can submit an interrupt without using a keyboard shortcut. This is useful for tests, APIs, dashboards, and notebooks.
+Submit an interrupt without using a keyboard shortcut — useful for tests, APIs, dashboards, and notebooks.
 
 ```python
 from autourgos_hcix import CognitiveInterruptManager, HcixInterruptMiddleware
@@ -116,8 +162,6 @@ At the next supported middleware hook, the instruction is consumed and injected 
 ---
 
 ## Human Approval Primitives
-
-The package also includes programmatic approval helpers.
 
 ```python
 from autourgos_hcix import HumanInterrupt, HumanInterruptHandler, HumanStateEditor
@@ -146,7 +190,9 @@ HCIx uses standard Autourgos middleware hooks:
 | `on_iteration(iteration, thought, ...)` | Polls after an iteration event. In `autourgos-agent`, this injects the override for the following reasoning step. |
 | `on_agent_end` / `on_agent_error` | Stops hotkey listeners and logs total paused time. |
 
-`agent.scratchpad` is a real, live instance attribute on `autourgos-agent`, so HCIx injects the override directly into it (in addition to `agent.system_prompt`) and the running agent picks it up on its very next LLM call.
+`agent.scratchpad` is a real, live instance attribute on `autourgos-agent`, so HCIx injects the override
+directly into it (in addition to `agent.system_prompt`) and the running agent picks it up on its very next
+LLM call.
 
 ---
 
@@ -163,25 +209,6 @@ HCIx uses standard Autourgos middleware hooks:
 
 ---
 
-## Package Structure
-
-```text
-autourgos-hcix/
-|-- autourgos_hcix/
-|   |-- __init__.py
-|   |-- base.py
-|   |-- hcix.py
-|   |-- interrupt.py
-|   |-- middleware.py
-|   `-- py.typed
-|-- tests/
-|   `-- test_hcix_interrupt.py
-|-- CHANGELOG.md
-|-- LICENSE
-|-- README.md
-`-- pyproject.toml
-```
-
 ## Requirements
 
 - Python 3.9+
@@ -190,14 +217,6 @@ autourgos-hcix/
 
 ---
 
-## Links
-
-- PyPI: https://pypi.org/project/autourgos-hcix/
-- GitHub: https://github.com/devxjitin/autourgos-hcix
-- Issues: https://github.com/devxjitin/autourgos-hcix/issues
-
----
-
 ## License
 
-MIT - see [LICENSE](LICENSE)
+Apache License 2.0, Copyright (c) 2026 Jitin Kumar Sengar

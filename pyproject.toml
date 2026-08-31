@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autourgos-hcix"
-version = "3.1.0"
+version = "3.1.1"
 description = "Human Cognitive Interrupt middleware for Autourgos agents with global hotkey steering."
 readme = "README.md"
 requires-python = ">=3.9"
-license = "MIT"
+license = { file = "LICENSE" }
 authors = [
     {name = "Jitin Kumar Sengar", email = "devxjitin@gmail.com"}
 ]
@@ -16,6 +16,7 @@ keywords = ["autourgos", "agent", "middleware", "human-in-the-loop", "interrupt"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",

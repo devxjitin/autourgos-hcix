@@ -49,6 +49,13 @@ class HcixInterruptMiddleware(CallbackHandler):
         self._manager = manager
         self._agent_ref: Optional["weakref.ReferenceType[Any]"] = None
         self._injected_blocks: List[str] = []
+        # Snapshot of agent.system_prompt taken in on_agent_start, before any
+        # injection this run could have happened. _restore_system_prompt
+        # restores this verbatim instead of substring-removing each injected
+        # block, which could delete unrelated text if the agent's own
+        # output/query ever happened to contain the same characters as an
+        # injected override block.
+        self._original_system_prompt: Optional[str] = None
 
     @property
     def manager(self) -> CognitiveInterruptManager:
@@ -64,6 +71,10 @@ class HcixInterruptMiddleware(CallbackHandler):
     def on_agent_start(self, query: str, agent: Any = None, **kwargs: Any) -> None:
         """Create and attach the interrupt manager at agent startup."""
         agent = agent or kwargs.get("agent")
+        self._injected_blocks = []
+        self._original_system_prompt = (
+            getattr(agent, "system_prompt", None) if agent is not None else None
+        )
         if agent is not None:
             try:
                 self._agent_ref = weakref.ref(agent)
@@ -147,12 +158,15 @@ class HcixInterruptMiddleware(CallbackHandler):
         if agent is None or not isinstance(getattr(agent, "system_prompt", None), str):
             return
 
-        prompt = getattr(agent, "system_prompt")
-        for block in self._injected_blocks:
-            prompt = prompt.replace(f"\n\n{block}", "")
-            prompt = prompt.replace(block, "")
-        setattr(agent, "system_prompt", prompt.strip())
+        if self._injected_blocks and self._original_system_prompt is not None:
+            # Restore the exact pre-injection snapshot rather than
+            # substring-removing each block: if the agent's own output or
+            # the user's query ever happened to contain the same text as an
+            # injected override block, a substring .replace() would delete
+            # that unrelated text too.
+            setattr(agent, "system_prompt", self._original_system_prompt)
         self._injected_blocks.clear()
+        self._original_system_prompt = None
 
     def _log_total_pause(self, agent: Any, label: str) -> None:
         logger = getattr(agent, "logger", None) if agent is not None else None

@@ -11,6 +11,7 @@ from autourgos_hcix import (
     HumanStateEditor,
     InterruptState,
 )
+from autourgos_hcix.middleware import format_human_override
 
 
 class DummyAgent:
@@ -51,6 +52,38 @@ class HcixInterruptTests(unittest.TestCase):
 
         middleware.on_agent_end("done", agent=agent)
         self.assertEqual(agent.system_prompt, "base prompt")
+
+    def test_restore_preserves_preexisting_text_matching_injected_block(self):
+        """Regression: _restore_system_prompt used to remove injected blocks
+        via a global substring .replace(), which strips EVERY occurrence of
+        that text -- including one that was already part of the agent's
+        base prompt before this run's injection, not just the one HCIx
+        itself added. It now restores the exact pre-injection snapshot, so
+        anything present before injection (matching or not) survives."""
+        manager = CognitiveInterruptManager(enable_hotkey=False)
+        middleware = HcixInterruptMiddleware(manager=manager)
+        agent = DummyAgent()
+
+        # Craft the base prompt to already contain, verbatim, the text a
+        # later override injection will also produce.
+        preexisting_block = format_human_override("summarize now")
+        agent.system_prompt = f"base prompt\n\n{preexisting_block}"
+
+        middleware.on_agent_start("query", agent=agent)
+        manager.submit_instruction("summarize now")
+        middleware.on_iteration_start(1, agent=agent)
+
+        # both the pre-existing occurrence and HCIx's own new injection are
+        # now present
+        self.assertEqual(agent.system_prompt.count(preexisting_block), 2)
+
+        middleware.on_agent_end("done", agent=agent)
+
+        # Old (buggy) behavior: global .replace() would strip BOTH
+        # occurrences, losing the pre-existing one that was never HCIx's to
+        # remove. New behavior: restore the exact snapshot from before this
+        # run's injection, so the pre-existing occurrence survives.
+        self.assertEqual(agent.system_prompt, f"base prompt\n\n{preexisting_block}")
 
     def test_state_editor_does_not_mutate_original(self):
         original = {"nested": {"count": 1}}

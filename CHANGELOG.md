@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.1.2] - 2026-09-01
+
+- Fixed: `_restore_system_prompt` used a global substring `.replace()` to
+  remove each injected override block, which strips *every* occurrence of
+  that text — including one that legitimately pre-existed in the agent's
+  base prompt before this run's injection, not just the one HCIx itself
+  added. It now restores the exact pre-injection snapshot taken in
+  `on_agent_start` instead.
+
 ## [3.1.0] - 2026-08-30
 
 - BREAKING: dependency migrated from `autourgos-react-agent>=1.6.0` (the

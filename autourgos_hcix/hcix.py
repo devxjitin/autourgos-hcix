@@ -122,6 +122,18 @@ class CognitiveInterruptManager:
         if enable_hotkey:
             self._start_hotkey_listener()
 
+    @classmethod
+    def headless(cls, shortcut: str = "ctrl+shift+h", poll_interval: float = 0.25) -> "CognitiveInterruptManager":
+        """
+        Build a manager with no global-hotkey listener.
+
+        For autonomous/headless/server deployments where no human is at a
+        keyboard to trigger a hotkey. Steer the agent via
+        ``manager.submit_instruction(...)`` from your own control plane
+        (an API endpoint, a queue consumer, a supervisor process) instead.
+        """
+        return cls(shortcut=shortcut, poll_interval=poll_interval, enable_hotkey=False)
+
     @property
     def registration_error(self) -> Optional[str]:
         """Return the hotkey registration error, if listener startup failed."""
@@ -135,6 +147,16 @@ class CognitiveInterruptManager:
                 name="hcix-hotkey-listener",
             )
             listener.start()
+            return
+
+        if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+            self._registration_error = (
+                "No DISPLAY/WAYLAND_DISPLAY detected -- skipping HCIx global hotkey "
+                "listener (no desktop session to bind it to). This is expected on "
+                "headless/server/container deployments; use "
+                "CognitiveInterruptManager.headless() or enable_hotkey=False and "
+                "submit_instruction() to steer the agent programmatically instead."
+            )
             return
 
         try:

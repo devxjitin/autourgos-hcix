@@ -1,5 +1,35 @@
 # Changelog
 
+## [3.2.2] - 2026-09-01
+
+- Dependency: raised the `autourgos-agent` floor from `>=2.0.2` to
+  `>=3.1.0`. `autourgos-agent` 3.1.0 added sync-hook thread offloading in
+  `CallbackManager` under `ainvoke()` (a sync `on_iteration_start`/etc.
+  handler now runs off the event-loop thread instead of inline) -- below
+  that version, a blocking call inside this middleware's hooks would stall
+  every other concurrent `ainvoke()` run sharing that thread. The old
+  floor allowed resolving against a pre-3.1.0 install that lacks this fix.
+  No code changes here.
+
+## [3.2.1] - 2026-09-01
+
+- Metadata: added `maintainers` (Sonia, Vishwanil Suman) to `pyproject.toml`,
+  and linked the README's existing Sonia contributor badge to her GitHub
+  profile (https://github.com/dahiyasonia). No code changes.
+
+## [3.2.0] - 2026-09-01
+
+- Added `CognitiveInterruptManager.headless()` classmethod -- shorthand for
+  `enable_hotkey=False`, for autonomous/server/container deployments with no
+  human at a keyboard to trigger a global hotkey.
+- On non-Windows platforms, the hotkey listener now checks for
+  `DISPLAY`/`WAYLAND_DISPLAY` before attempting to start: with neither set
+  (a headless box), it skips importing/starting `pynput` entirely and sets
+  `registration_error` immediately, instead of letting the `pynput` listener
+  attempt and fail. No behavior change on Windows or on a real desktop
+  session with a display.
+- Documented the autonomous/headless usage pattern in the README.
+
 ## [3.1.2] - 2026-09-01
 
 - Fixed: `_restore_system_prompt` used a global substring `.replace()` to

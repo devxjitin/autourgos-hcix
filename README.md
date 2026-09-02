@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://pypi.org/project/autourgos-hcix/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green.svg)](https://github.com/devxjitin/autourgos-hcix/blob/main/LICENSE)
 [![Author](https://img.shields.io/badge/Author-Jitin%20Kumar%20Sengar-blue.svg)](https://github.com/devxjitin)
-[![Contributor](https://img.shields.io/badge/Contributor-Sonia-blueviolet.svg)]()
+[![Contributor](https://img.shields.io/badge/Contributor-Sonia-blueviolet.svg)](https://github.com/dahiyasonia)
 [![Contributor](https://img.shields.io/badge/Contributor-Vishwanil%20Suman-blueviolet.svg)]()
 
 Human Cognitive Interrupt (HCIx) middleware for [Autourgos](https://github.com/devxjitin) agents. Press a
@@ -158,6 +158,32 @@ manager.submit_instruction("Stop searching. Summarize only the sources already c
 ```
 
 At the next supported middleware hook, the instruction is consumed and injected once.
+
+---
+
+## Autonomous / Headless Agents
+
+Global hotkeys and desktop prompts assume a human is sitting at a keyboard. An autonomous
+agent running on a server, in a container, or in the cloud has neither — there's no `DISPLAY`
+for `pynput` to bind to, and no one to press `ctrl+shift+h`.
+
+For these deployments, skip the hotkey listener entirely and drive HCIx from your own control
+plane (an API endpoint, a queue consumer, a supervisor process) instead:
+
+```python
+from autourgos_hcix import CognitiveInterruptManager, HcixInterruptMiddleware
+
+manager = CognitiveInterruptManager.headless()
+middleware = HcixInterruptMiddleware(manager=manager)
+
+# elsewhere -- an API handler, a queue consumer, an operator dashboard:
+manager.submit_instruction("Stop researching. Summarize what you have.")
+```
+
+`CognitiveInterruptManager.headless()` is shorthand for `enable_hotkey=False`. On a headless
+box, `enable_hotkey=True` (the default) also degrades safely on its own -- no `DISPLAY`/
+`WAYLAND_DISPLAY` means HCIx skips the hotkey listener without attempting to import `pynput` --
+but for an autonomous deployment, being explicit is clearer than relying on that fallback.
 
 ---
 

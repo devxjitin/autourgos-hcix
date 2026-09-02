@@ -1,6 +1,7 @@
+import os
 import threading
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from autourgos_agent.testing import make_test_agent
 
@@ -163,6 +164,25 @@ class HcixInterruptTests(unittest.TestCase):
         self.assertEqual(result, "final")
         self.assertIn("switch to plan B", agent.scratchpad)
         self.assertIn("HUMAN COGNITIVE INTERRUPT", agent.scratchpad)
+
+    def test_headless_classmethod_disables_hotkey(self):
+        manager = CognitiveInterruptManager.headless()
+
+        self.assertIsNone(manager._listener)
+        self.assertIsNone(manager._hotkey_id)
+        manager.submit_instruction("go")
+        self.assertEqual(manager.poll(), "go")
+
+    def test_headless_environment_skips_pynput_without_importing_it(self):
+        env = {k: v for k, v in os.environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")}
+        with patch.dict(os.environ, env, clear=True), \
+             patch("autourgos_hcix.hcix.os.name", "posix"), \
+             patch.object(CognitiveInterruptManager, "_start_pynput_listener") as start_pynput:
+            manager = CognitiveInterruptManager(enable_hotkey=True)
+
+        start_pynput.assert_not_called()
+        self.assertIsNotNone(manager.registration_error)
+        self.assertIn("DISPLAY", manager.registration_error)
 
     def test_interrupt_handler_waits_for_submit(self):
         handler = HumanInterruptHandler()

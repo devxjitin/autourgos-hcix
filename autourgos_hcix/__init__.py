@@ -19,9 +19,9 @@ try:
     try:
         __version__ = version("autourgos-hcix")
     except PackageNotFoundError:
-        __version__ = "3.1.1"
+        __version__ = "3.2.2"
 except Exception:
-    __version__ = "3.1.1"
+    __version__ = "3.2.2"
 
 __all__ = [
     "CallbackHandler",

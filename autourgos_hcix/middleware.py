@@ -8,7 +8,7 @@ import weakref
 from typing import Any, List, Optional
 
 from autourgos_agent import inject_prompt_block, remove_prompt_block
-from autourgos_core import warn_once_per_agent
+from autourgos_core import PerAgentRegistry, warn_once_per_agent
 
 from .base import CallbackHandler
 from .hcix import CognitiveInterruptManager
@@ -53,7 +53,10 @@ class HcixInterruptMiddleware(CallbackHandler):
         self.enable_hotkey = enable_hotkey
 
         self._manager = manager
-        self._agent_ref: Optional["weakref.ReferenceType[Any]"] = None
+        # Fallback target for callers that reach inject_instruction()
+        # directly (e.g. from manager.poll()'s trigger) without an explicit
+        # agent -- last agent seen via a lifecycle hook.
+        self._last_agent: Optional[Any] = None
         # Exact strings returned by inject_prompt_block() for each override
         # injected this run -- NOT a whole-system_prompt snapshot. A
         # snapshot-and-restore-the-whole-string design breaks the moment
@@ -66,7 +69,13 @@ class HcixInterruptMiddleware(CallbackHandler):
         # autourgos-agent. Removing exactly the substrings THIS instance
         # inserted is correct regardless of registration order or what any
         # other middleware does before/after/in between.
-        self._injected_blocks: List[str] = []
+        #
+        # Keyed per-agent (PerAgentRegistry) rather than a flat list: this
+        # middleware instance is commonly shared across multiple concurrent
+        # agents, and a flat self._injected_blocks let one agent's
+        # on_agent_start reset the list out from under another agent's
+        # still-in-flight injections/restore.
+        self._runs: "PerAgentRegistry[List[str]]" = PerAgentRegistry()
         # Tracks which agents this middleware has already warned about
         # running in tool_calling_mode="native" with inject_into_scratchpad
         # enabled -- see inject_instruction's native-mode warning.
@@ -86,12 +95,9 @@ class HcixInterruptMiddleware(CallbackHandler):
     def on_agent_start(self, query: str, agent: Any = None, **kwargs: Any) -> None:
         """Create and attach the interrupt manager at agent startup."""
         agent = agent or kwargs.get("agent")
-        self._injected_blocks = []
         if agent is not None:
-            try:
-                self._agent_ref = weakref.ref(agent)
-            except TypeError:
-                self._agent_ref = None
+            self._last_agent = agent
+            self._runs.set(agent, [])
             setattr(agent, "_interrupt_manager", self.manager)
         else:
             _ = self.manager
@@ -132,9 +138,7 @@ class HcixInterruptMiddleware(CallbackHandler):
             self._manager.stop()
 
     def _get_agent(self) -> Any:
-        if self._agent_ref is None:
-            return None
-        return self._agent_ref()
+        return self._last_agent
 
     def _warn_native_scratchpad_noop(self, agent: Any) -> None:
         if self.inject_into_system_prompt:
@@ -197,7 +201,7 @@ class HcixInterruptMiddleware(CallbackHandler):
             # undo precisely this insertion later.
             inserted = inject_prompt_block(agent, block, prepend=False)
             if inserted is not None:
-                self._injected_blocks.append(inserted)
+                self._runs.get(agent, list).append(inserted)
 
         logger = getattr(agent, "logger", None)
         if logger:
@@ -206,16 +210,20 @@ class HcixInterruptMiddleware(CallbackHandler):
         return block
 
     def _restore_system_prompt(self, agent: Any) -> None:
-        if agent is None or not isinstance(getattr(agent, "system_prompt", None), str):
+        if agent is None:
+            return
+        injected_blocks = self._runs.pop(agent, None)
+        if self._last_agent is agent:
+            self._last_agent = None
+        if injected_blocks is None or not isinstance(getattr(agent, "system_prompt", None), str):
             return
 
         # Remove exactly the blocks THIS run injected -- order-independent
         # and correct regardless of what other middleware (toolbox, skills)
         # injects/removes before, after, or in between. See
         # inject_prompt_block's module docstring in autourgos-agent.
-        for block in self._injected_blocks:
+        for block in injected_blocks:
             remove_prompt_block(agent, block)
-        self._injected_blocks.clear()
 
     def _log_total_pause(self, agent: Any, label: str) -> None:
         logger = getattr(agent, "logger", None) if agent is not None else None

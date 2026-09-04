@@ -272,6 +272,72 @@ class HcixInterruptTests(unittest.TestCase):
         self.assertEqual(agent.system_prompt, "base prompt")  # override never reached anywhere
         self.assertTrue(any("NOT reach the model" in msg for msg in log_ctx.output))
 
+    def test_two_agents_sharing_one_middleware_do_not_clash(self):
+        """
+        Sprint 5 regression: HcixInterruptMiddleware used to track injected
+        blocks in a flat self._injected_blocks list and a flat
+        self._agent_ref -- a single middleware instance shared by two agents
+        would have one agent's on_agent_start reset state out from under the
+        other's in-flight injection/restore. Now per-agent (PerAgentRegistry),
+        so two agents' overrides and restores stay independent regardless of
+        interleaving.
+        """
+        manager = CognitiveInterruptManager(enable_hotkey=False)
+        middleware = HcixInterruptMiddleware(manager=manager)
+        agent_a = DummyAgent()
+        agent_b = DummyAgent()
+
+        middleware.on_agent_start("query", agent=agent_a)
+        middleware.on_agent_start("query", agent=agent_b)
+
+        middleware.inject_instruction("override for a", agent=agent_a)
+
+        self.assertIn("override for a", agent_a.system_prompt)
+        self.assertNotIn("override for a", agent_b.system_prompt)
+        self.assertEqual(agent_b.system_prompt, "base prompt")
+
+        middleware.inject_instruction("override for b", agent=agent_b)
+        self.assertIn("override for b", agent_b.system_prompt)
+        self.assertNotIn("override for b", agent_a.system_prompt)
+
+        middleware.on_agent_end("done", agent=agent_a)
+        self.assertEqual(agent_a.system_prompt, "base prompt")
+        # agent_b's still-active injection must survive agent_a's restore
+        self.assertIn("override for b", agent_b.system_prompt)
+
+        middleware.on_agent_end("done", agent=agent_b)
+        self.assertEqual(agent_b.system_prompt, "base prompt")
+
+    def test_two_concurrent_agents_threaded_do_not_clash(self):
+        manager = CognitiveInterruptManager(enable_hotkey=False)
+        middleware = HcixInterruptMiddleware(manager=manager)
+        agent_a = DummyAgent()
+        agent_b = DummyAgent()
+
+        errors = []
+        barrier = threading.Barrier(2)
+
+        def drive(agent, own_text, other_text):
+            try:
+                middleware.on_agent_start("query", agent=agent)
+                barrier.wait(timeout=5)
+                middleware.inject_instruction(own_text, agent=agent)
+                for _ in range(20):
+                    assert other_text not in agent.system_prompt, f"leaked {other_text!r} into agent"
+                middleware.on_agent_end("done", agent=agent)
+                assert agent.system_prompt == "base prompt"
+            except Exception as exc:  # pragma: no cover - surfaced via errors list
+                errors.append(exc)
+
+        t_a = threading.Thread(target=drive, args=(agent_a, "override for a", "override for b"))
+        t_b = threading.Thread(target=drive, args=(agent_b, "override for b", "override for a"))
+        t_a.start()
+        t_b.start()
+        t_a.join(timeout=10)
+        t_b.join(timeout=10)
+
+        self.assertEqual(errors, [])
+
 
 if __name__ == "__main__":
     unittest.main()

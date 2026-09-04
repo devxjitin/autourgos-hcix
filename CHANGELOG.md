@@ -1,5 +1,9 @@
 # Changelog
 
+## [3.2.6] - 2026-09-05
+
+- **Fixed a real concurrency bug:** injected-override state (`self._injected_blocks`, `self._agent_ref`) was flat instance state, not per-agent — a single `HcixInterruptMiddleware` instance shared by two concurrent agents would have one agent's `on_agent_start`/restore clobber or lose the other's still-active injection. Migrated to `autourgos_core.PerAgentRegistry`, keyed by agent. No behavior change for the common single-agent-per-instance case. Bumped `autourgos-core>=0.7.0`. Reproduced the old bug live (two agents sharing one instance, second agent's override never got cleanly restored) before fixing; live-verified the fix against a real `Agent` + real Azure LLM (instruction actually reached and was followed by the model, state cleanly restored after) plus a threaded two-real-agent isolation test.
+
 ## [3.2.5] - 2026-09-04
 
 - Internal: `_warn_native_scratchpad_noop()`'s warn-once-per-agent tracking now delegates to `autourgos_core.warn_once_per_agent()` (bumped `autourgos-core>=0.5.0`). No functional change -- same messages, same once-per-agent behavior. Live-verified against a real Agent + real Azure LLM.

@@ -33,6 +33,7 @@ result = agent.invoke("Research this task and keep working until you have a fina
   worker-thread-blocks-until-a-human-decides workflows
 - **Native on Windows** (`RegisterHotKey`), `pynput` optional extra for Linux/macOS
 - **Cleanup guaranteed** — hotkey listeners unregister on run end or error
+- **Safe to share across agents** — one `HcixInterruptMiddleware` instance can serve multiple concurrent `Agent`s; per-agent injected-override state is isolated (`autourgos-core`'s `PerAgentRegistry`)
 
 ---
 

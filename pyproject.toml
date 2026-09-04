@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autourgos-hcix"
-version = "3.2.3"
+version = "3.2.4"
 description = "Human Cognitive Interrupt middleware for Autourgos agents with global hotkey steering."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -28,7 +28,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-dependencies = ["autourgos-agent>=3.1.0"]
+dependencies = ["autourgos-agent>=3.1.0", "autourgos-core>=0.3.0"]
 
 [project.optional-dependencies]
 hcix = ["pynput>=1.7.6"]

@@ -13,15 +13,9 @@ from .middleware import (
     format_human_override,
 )
 
-try:
-    from importlib.metadata import PackageNotFoundError, version
+from autourgos_core import package_version
 
-    try:
-        __version__ = version("autourgos-hcix")
-    except PackageNotFoundError:
-        __version__ = "3.2.3"
-except Exception:
-    __version__ = "3.2.3"
+__version__ = package_version("autourgos-hcix", fallback="3.2.4")
 
 __all__ = [
     "CallbackHandler",

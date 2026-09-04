@@ -1,5 +1,9 @@
 # Changelog
 
+## [3.2.4] - 2026-09-04
+
+- Internal: `__version__` resolution moved to `autourgos_core.package_version()` (new `autourgos-core>=0.3.0` dependency), unifying the previously-divergent nested `except PackageNotFoundError` into the same `except Exception` pattern every other package uses. No functional change.
+
 ## [3.2.3] - 2026-09-03
 
 - Added `features.md` documenting the module's feature set and a competitor comparison. No code changes.

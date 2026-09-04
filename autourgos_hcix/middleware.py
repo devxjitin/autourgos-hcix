@@ -3,11 +3,17 @@ middleware.py - HCIx middleware for Autourgos agents.
 """
 from __future__ import annotations
 
+import logging
 import weakref
 from typing import Any, List, Optional
 
+from autourgos_agent import inject_prompt_block, remove_prompt_block
+from autourgos_core import warn_once_per_agent
+
 from .base import CallbackHandler
 from .hcix import CognitiveInterruptManager
+
+_logger = logging.getLogger(__name__)
 
 
 def format_human_override(instruction: str) -> str:
@@ -48,14 +54,23 @@ class HcixInterruptMiddleware(CallbackHandler):
 
         self._manager = manager
         self._agent_ref: Optional["weakref.ReferenceType[Any]"] = None
+        # Exact strings returned by inject_prompt_block() for each override
+        # injected this run -- NOT a whole-system_prompt snapshot. A
+        # snapshot-and-restore-the-whole-string design breaks the moment
+        # another middleware (toolbox, skills) also injects into the same
+        # system_prompt: whichever middleware's on_agent_end fires last
+        # wins, and a middleware registered after this one would have
+        # snapshotted THIS middleware's already-injected text as if it were
+        # "the original," so restoring never actually got back to the true
+        # original -- see inject_prompt_block's module docstring in
+        # autourgos-agent. Removing exactly the substrings THIS instance
+        # inserted is correct regardless of registration order or what any
+        # other middleware does before/after/in between.
         self._injected_blocks: List[str] = []
-        # Snapshot of agent.system_prompt taken in on_agent_start, before any
-        # injection this run could have happened. _restore_system_prompt
-        # restores this verbatim instead of substring-removing each injected
-        # block, which could delete unrelated text if the agent's own
-        # output/query ever happened to contain the same characters as an
-        # injected override block.
-        self._original_system_prompt: Optional[str] = None
+        # Tracks which agents this middleware has already warned about
+        # running in tool_calling_mode="native" with inject_into_scratchpad
+        # enabled -- see inject_instruction's native-mode warning.
+        self._warned_native_scratchpad_agents: "weakref.WeakSet[Any]" = weakref.WeakSet()
 
     @property
     def manager(self) -> CognitiveInterruptManager:
@@ -72,9 +87,6 @@ class HcixInterruptMiddleware(CallbackHandler):
         """Create and attach the interrupt manager at agent startup."""
         agent = agent or kwargs.get("agent")
         self._injected_blocks = []
-        self._original_system_prompt = (
-            getattr(agent, "system_prompt", None) if agent is not None else None
-        )
         if agent is not None:
             try:
                 self._agent_ref = weakref.ref(agent)
@@ -124,6 +136,25 @@ class HcixInterruptMiddleware(CallbackHandler):
             return None
         return self._agent_ref()
 
+    def _warn_native_scratchpad_noop(self, agent: Any) -> None:
+        if self.inject_into_system_prompt:
+            message = (
+                "HcixInterruptMiddleware: agent.tool_calling_mode is 'native' -- "
+                "inject_into_scratchpad has no effect in native mode (scratchpad "
+                "is never sent to the LLM there); the override still reaches the "
+                "model via system_prompt (inject_into_system_prompt=True)."
+            )
+        else:
+            message = (
+                "HcixInterruptMiddleware: agent.tool_calling_mode is 'native' and "
+                "inject_into_system_prompt=False -- the injected override will "
+                "NOT reach the model at all (inject_into_scratchpad has no effect "
+                "in native mode; scratchpad is never sent to the LLM there). Set "
+                "inject_into_system_prompt=True to actually deliver overrides in "
+                "native mode."
+            )
+        warn_once_per_agent(self._warned_native_scratchpad_agents, agent, _logger, message)
+
     def _poll_and_inject(self, agent: Any = None) -> None:
         agent = agent or self._get_agent()
         logger = getattr(agent, "logger", None) if agent is not None else None
@@ -136,17 +167,37 @@ class HcixInterruptMiddleware(CallbackHandler):
         """Inject an instruction into the agent context and return the block."""
         agent = agent or self._get_agent()
         block = format_human_override(instruction)
-        self._injected_blocks.append(block)
 
         if agent is None:
             return block
 
         if self.inject_into_scratchpad and isinstance(getattr(agent, "scratchpad", None), str):
-            agent.scratchpad += f"\n\n{block}"
+            if getattr(agent, "tool_calling_mode", "prompt") == "native":
+                # tool_calling_mode="native" never sends agent.scratchpad
+                # to the LLM (it's a human-readable trace only -- the real
+                # conversation state is an internal message list this
+                # middleware has no access to). Appending the override
+                # there used to silently drop it with no signal at all if
+                # inject_into_system_prompt was also off. Warned once per
+                # agent instead of failing silently.
+                self._warn_native_scratchpad_noop(agent)
+            else:
+                agent.scratchpad += f"\n\n{block}"
 
         if self.inject_into_system_prompt and isinstance(getattr(agent, "system_prompt", None), str):
-            current = getattr(agent, "system_prompt")
-            setattr(agent, "system_prompt", f"{current}\n\n{block}".strip())
+            # Appended (prepend=False), not prepended -- an override reads
+            # naturally as coming after the base system prompt/catalog
+            # text, matching this middleware's prior behavior exactly. The
+            # isinstance guard preserves this middleware's original scope
+            # (system_prompt only, never inject_prompt_block's
+            # prompt_template fallback -- HCIx never touched that).
+            # inject_prompt_block's returned value (not `block` itself) is
+            # what gets tracked, since it includes the separator this call
+            # actually introduced -- required for remove_prompt_block() to
+            # undo precisely this insertion later.
+            inserted = inject_prompt_block(agent, block, prepend=False)
+            if inserted is not None:
+                self._injected_blocks.append(inserted)
 
         logger = getattr(agent, "logger", None)
         if logger:
@@ -158,15 +209,13 @@ class HcixInterruptMiddleware(CallbackHandler):
         if agent is None or not isinstance(getattr(agent, "system_prompt", None), str):
             return
 
-        if self._injected_blocks and self._original_system_prompt is not None:
-            # Restore the exact pre-injection snapshot rather than
-            # substring-removing each block: if the agent's own output or
-            # the user's query ever happened to contain the same text as an
-            # injected override block, a substring .replace() would delete
-            # that unrelated text too.
-            setattr(agent, "system_prompt", self._original_system_prompt)
+        # Remove exactly the blocks THIS run injected -- order-independent
+        # and correct regardless of what other middleware (toolbox, skills)
+        # injects/removes before, after, or in between. See
+        # inject_prompt_block's module docstring in autourgos-agent.
+        for block in self._injected_blocks:
+            remove_prompt_block(agent, block)
         self._injected_blocks.clear()
-        self._original_system_prompt = None
 
     def _log_total_pause(self, agent: Any, label: str) -> None:
         logger = getattr(agent, "logger", None) if agent is not None else None

@@ -1,5 +1,9 @@
 # Changelog
 
+## [3.2.5] - 2026-09-04
+
+- Internal: `_warn_native_scratchpad_noop()`'s warn-once-per-agent tracking now delegates to `autourgos_core.warn_once_per_agent()` (bumped `autourgos-core>=0.5.0`). No functional change -- same messages, same once-per-agent behavior. Live-verified against a real Agent + real Azure LLM.
+
 ## [3.2.4] - 2026-09-04
 
 - Internal: `__version__` resolution moved to `autourgos_core.package_version()` (new `autourgos-core>=0.3.0` dependency), unifying the previously-divergent nested `except PackageNotFoundError` into the same `except Exception` pattern every other package uses. No functional change.

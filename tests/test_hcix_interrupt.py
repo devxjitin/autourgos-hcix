@@ -198,6 +198,80 @@ class HcixInterruptTests(unittest.TestCase):
         self.assertEqual(action, "edit")
         self.assertEqual(edits, {"x": 2})
 
+    def test_restore_is_exact_even_with_foreign_text_injected_around_it(self):
+        """
+        Regression: restore used to snapshot the WHOLE system_prompt before
+        injecting and restore that whole snapshot after -- if another
+        middleware (autourgos-toolbox, autourgos-skills) prepended text of
+        its own between this middleware's on_agent_start and on_agent_end,
+        this middleware's snapshot-based restore would silently discard
+        that other middleware's still-active injection (or, depending on
+        registration order, permanently bake HCIx's own override into what
+        the other middleware treats as "the original"). Restore must now
+        remove exactly the block THIS middleware added, leaving anything
+        else untouched regardless of when it was added.
+        """
+        manager = CognitiveInterruptManager(enable_hotkey=False)
+        middleware = HcixInterruptMiddleware(manager=manager)
+        agent = DummyAgent()
+        base_prompt = agent.system_prompt
+
+        middleware.on_agent_start("query", agent=agent)
+        manager.submit_instruction("summarize now")
+        middleware.on_iteration_start(1, agent=agent)
+        self.assertIn("summarize now", agent.system_prompt)
+
+        # simulate a second, unrelated middleware injecting its own text
+        # AFTER hcix already injected, still active when hcix's own
+        # on_agent_end fires
+        agent.system_prompt = f"{agent.system_prompt}\n\nFOREIGN BLOCK"
+
+        middleware.on_agent_end("done", agent=agent)
+
+        self.assertEqual(agent.system_prompt, f"{base_prompt}\n\nFOREIGN BLOCK")
+
+    def test_native_mode_scratchpad_injection_is_skipped_and_warns_once(self):
+        """
+        Regression: tool_calling_mode="native" never sends agent.scratchpad
+        to the LLM. inject_into_scratchpad used to append the override
+        there anyway, silently dropping it with zero signal if
+        inject_into_system_prompt was also disabled. Must now skip the
+        scratchpad append for a native-mode agent and warn once (not per
+        injection), and system_prompt injection must still work normally.
+        """
+        manager = CognitiveInterruptManager(enable_hotkey=False)
+        middleware = HcixInterruptMiddleware(manager=manager)
+        agent = DummyAgent()
+        agent.tool_calling_mode = "native"
+
+        with self.assertLogs("autourgos_hcix.middleware", level="WARNING") as log_ctx:
+            middleware.on_agent_start("query", agent=agent)
+            manager.submit_instruction("first override")
+            middleware.on_iteration_start(1, agent=agent)
+            manager.submit_instruction("second override")
+            middleware.on_iteration_start(2, agent=agent)
+
+        self.assertEqual(agent.scratchpad, "")  # never appended to in native mode
+        self.assertIn("first override", agent.system_prompt)  # still reaches the model
+        self.assertIn("second override", agent.system_prompt)
+        native_mode_warnings = [msg for msg in log_ctx.output if "native" in msg]
+        self.assertEqual(len(native_mode_warnings), 1)  # warned once, not per injection
+
+    def test_native_mode_with_system_prompt_injection_disabled_warns_override_dropped(self):
+        manager = CognitiveInterruptManager(enable_hotkey=False)
+        middleware = HcixInterruptMiddleware(manager=manager, inject_into_system_prompt=False)
+        agent = DummyAgent()
+        agent.tool_calling_mode = "native"
+
+        with self.assertLogs("autourgos_hcix.middleware", level="WARNING") as log_ctx:
+            middleware.on_agent_start("query", agent=agent)
+            manager.submit_instruction("dropped override")
+            middleware.on_iteration_start(1, agent=agent)
+
+        self.assertEqual(agent.scratchpad, "")
+        self.assertEqual(agent.system_prompt, "base prompt")  # override never reached anywhere
+        self.assertTrue(any("NOT reach the model" in msg for msg in log_ctx.output))
+
 
 if __name__ == "__main__":
     unittest.main()

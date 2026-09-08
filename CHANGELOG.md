@@ -1,5 +1,10 @@
 # Changelog
 
+## [3.3.0] - 2026-09-06
+
+- **Fixed:** a middleware instance that lazily creates its own `CognitiveInterruptManager` (no explicit `manager=` passed) used to reuse the SAME manager for every agent run -- already `stop()`-ped at the end of the prior run, its hotkey listener thread had exited for good, so every run after the first got a dead listener. `on_agent_start` now recreates an owned manager per run. A caller-supplied `manager=` (deliberately shared, e.g. across concurrent agents) is never recreated, unchanged. (FRAMEWORK_REVIEW.md Finding #5.)
+- **Fixed:** an instruction that committed after the LLM had already planned an action batch for a turn, but before that batch was dispatched, used to be injected too late to stop it -- the stale plan executed anyway, and the override only affected the turn after. `on_iteration` now returns `True` when it actually injects an instruction, and `autourgos-agent` (bumped `autourgos-agent>=3.4.0`, which adds this discard signal to `CallbackHandler.on_iteration`'s contract) discards that turn's action batch instead of executing it. Only applies in `tool_calling_mode="prompt"` (native mode has no equivalent hook point yet).
+
 ## [3.2.6] - 2026-09-05
 
 - **Fixed a real concurrency bug:** injected-override state (`self._injected_blocks`, `self._agent_ref`) was flat instance state, not per-agent — a single `HcixInterruptMiddleware` instance shared by two concurrent agents would have one agent's `on_agent_start`/restore clobber or lose the other's still-active injection. Migrated to `autourgos_core.PerAgentRegistry`, keyed by agent. No behavior change for the common single-agent-per-instance case. Bumped `autourgos-core>=0.7.0`. Reproduced the old bug live (two agents sharing one instance, second agent's override never got cleanly restored) before fixing; live-verified the fix against a real `Agent` + real Azure LLM (instruction actually reached and was followed by the model, state cleanly restored after) plus a threaded two-real-agent isolation test.

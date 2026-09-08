@@ -3,6 +3,7 @@ import threading
 import unittest
 from unittest.mock import MagicMock, patch
 
+from autourgos_agent import CallbackHandler
 from autourgos_agent.testing import make_test_agent
 
 from autourgos_hcix import (
@@ -337,6 +338,116 @@ class HcixInterruptTests(unittest.TestCase):
         t_b.join(timeout=10)
 
         self.assertEqual(errors, [])
+
+    def test_late_instruction_discards_stale_action_batch_end_to_end(self):
+        """
+        Sprint 4b regression (FRAMEWORK_REVIEW.md Finding #5): an
+        instruction that lands AFTER the LLM has already planned an action
+        batch for this turn (but before that batch is dispatched) must
+        cause the batch to be discarded, not executed -- since HCIx's
+        on_iteration hook now returns True when it injects, which
+        autourgos-agent's loop treats as "discard this turn's actions."
+
+        A helper middleware's on_llm_end fires between on_iteration_start
+        (already polled, found nothing) and on_iteration (the discard-gate
+        poll) for iteration 1 -- exactly the window Finding #5 describes --
+        and submits the instruction there, simulating a human instruction
+        that commits mid-turn.
+        """
+        import json
+
+        called = []
+
+        def spy_tool(text=""):
+            called.append(text)
+            return f"echo: {text}"
+
+        spy = {
+            "name": "echo",
+            "description": "d",
+            "parameters": {"type": "object", "properties": {"text": {"type": "string"}}},
+            "func": spy_tool,
+        }
+
+        manager = CognitiveInterruptManager(enable_hotkey=False)
+        hcix_middleware = HcixInterruptMiddleware(manager=manager)
+
+        class SubmitDuringFirstTurn(CallbackHandler):
+            def __init__(self):
+                self.submitted = False
+
+            def on_llm_end(self, response, agent=None, **kwargs):
+                if not self.submitted:
+                    self.submitted = True
+                    manager.submit_instruction("switch to plan B")
+
+        responses = [
+            json.dumps({
+                "thought": "working",
+                "actions": [{"action": "echo", "action_input": {"text": "step one"}}],
+                "final_answer": None,
+            }),
+            json.dumps({"thought": None, "actions": [], "final_answer": "final"}),
+        ]
+
+        agent = make_test_agent(
+            responses=responses,
+            tools=[spy],
+            middleware=[SubmitDuringFirstTurn(), hcix_middleware],
+        )
+        result = agent.invoke("do the task")
+
+        self.assertEqual(result, "final")
+        # The first turn's tool call was discarded, never executed.
+        self.assertEqual(called, [])
+        self.assertIn("discarded before execution", agent.scratchpad)
+        # The injected override is visible in the scratchpad/system prompt.
+        self.assertIn("switch to plan B", agent.scratchpad)
+
+    def test_owned_manager_is_recreated_and_restarted_on_next_run(self):
+        """
+        Sprint 4a regression (FRAMEWORK_REVIEW.md Finding #5): a middleware
+        that lazily creates its own manager (no explicit manager= passed)
+        used to reuse the SAME manager -- already stop()-ped at the end of
+        the prior run, its hotkey listener thread exited for good -- for
+        every subsequent run. on_agent_start must now recreate it so the
+        next run gets a live listener.
+        """
+        with patch.object(CognitiveInterruptManager, "_start_hotkey_listener") as start_listener:
+            middleware = HcixInterruptMiddleware(enable_hotkey=True)
+            agent = DummyAgent()
+
+            middleware.on_agent_start("first run", agent=agent)
+            first_manager = middleware._manager
+            middleware.on_agent_end("done", agent=agent)
+
+            self.assertTrue(first_manager._stop_event.is_set())
+            self.assertEqual(start_listener.call_count, 1)
+
+            middleware.on_agent_start("second run", agent=agent)
+            second_manager = middleware._manager
+
+            self.assertIsNot(second_manager, first_manager)
+            self.assertFalse(second_manager._stop_event.is_set())
+            # Listener (re)started for the new manager too, not just the first.
+            self.assertEqual(start_listener.call_count, 2)
+
+            middleware.on_agent_end("done", agent=agent)
+
+    def test_explicitly_shared_manager_is_never_recreated(self):
+        """A caller-supplied manager= is deliberately shared (e.g. across
+        multiple concurrent agents, per test_two_agents_sharing_one_middleware)
+        and must never be swapped out from under the caller by on_agent_start,
+        unlike the owned-manager case above."""
+        manager = CognitiveInterruptManager(enable_hotkey=False)
+        middleware = HcixInterruptMiddleware(manager=manager)
+        agent = DummyAgent()
+
+        middleware.on_agent_start("first run", agent=agent)
+        middleware.on_agent_end("done", agent=agent)
+        middleware.on_agent_start("second run", agent=agent)
+
+        self.assertIs(middleware._manager, manager)
 
 
 if __name__ == "__main__":

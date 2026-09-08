@@ -53,6 +53,13 @@ class HcixInterruptMiddleware(CallbackHandler):
         self.enable_hotkey = enable_hotkey
 
         self._manager = manager
+        # True when this middleware owns/lazily-creates its manager (no
+        # explicit manager= passed in). Only an owned manager is recreated
+        # per run in on_agent_start -- a caller-supplied manager is assumed
+        # deliberately shared (e.g. across multiple concurrent agents, or
+        # across sequential runs by the caller's own design) and must never
+        # be swapped out from under it.
+        self._manager_owned = manager is None
         # Fallback target for callers that reach inject_instruction()
         # directly (e.g. from manager.poll()'s trigger) without an explicit
         # agent -- last agent seen via a lifecycle hook.
@@ -94,6 +101,20 @@ class HcixInterruptMiddleware(CallbackHandler):
 
     def on_agent_start(self, query: str, agent: Any = None, **kwargs: Any) -> None:
         """Create and attach the interrupt manager at agent startup."""
+        if self._manager_owned and self._manager is not None:
+            # A previous run's manager was already stop()-ped in
+            # on_agent_end/on_agent_error (or, if that was skipped by some
+            # earlier error path, this defensively stops it now) -- its
+            # hotkey listener thread has exited and will never restart on
+            # its own. Recreating it here (via the lazy `.manager` property
+            # below) is what actually gives this run a live listener,
+            # instead of silently reusing a dead one for every run after
+            # the first. Any instruction still sitting in the old manager's
+            # queue at this point is dropped -- an accepted limitation of
+            # per-run recreation, not a regression (see FRAMEWORK_REVIEW.md
+            # Finding #5).
+            self._manager.stop()
+            self._manager = None
         agent = agent or kwargs.get("agent")
         if agent is not None:
             self._last_agent = agent
@@ -112,14 +133,19 @@ class HcixInterruptMiddleware(CallbackHandler):
         thought: Optional[str] = None,
         agent: Any = None,
         **kwargs: Any,
-    ) -> None:
+    ) -> bool:
         """
         Poll when the host agent emits an iteration event.
 
-        Agent emits this after a thought is produced, so injected
-        instructions affect the following reasoning step there.
+        Agent fires this after a thought is parsed but before that same
+        turn's action batch is dispatched -- returning True here tells the
+        loop (autourgos-agent, CallbackHandler.on_iteration's contract) to
+        discard that batch instead of executing it, since it was reasoned
+        out before this instruction arrived (FRAMEWORK_REVIEW.md Finding
+        #5). Returns True only when an instruction was actually injected
+        just now, not on every poll.
         """
-        self._poll_and_inject(agent or kwargs.get("agent"))
+        return self._poll_and_inject(agent or kwargs.get("agent"))
 
     def on_agent_end(self, result: str, agent: Any = None, **kwargs: Any) -> None:
         """Stop listeners and remove temporary system prompt injections."""
@@ -159,13 +185,21 @@ class HcixInterruptMiddleware(CallbackHandler):
             )
         warn_once_per_agent(self._warned_native_scratchpad_agents, agent, _logger, message)
 
-    def _poll_and_inject(self, agent: Any = None) -> None:
+    def _poll_and_inject(self, agent: Any = None) -> bool:
+        """Poll for a committed instruction and inject it if present.
+
+        Returns True iff an instruction was actually injected just now --
+        used by on_iteration to tell the agent loop whether to discard the
+        current turn's action batch (on_iteration_start, called before the
+        LLM call, doesn't need this: nothing has been planned yet then).
+        """
         agent = agent or self._get_agent()
         logger = getattr(agent, "logger", None) if agent is not None else None
         instruction = self.manager.poll(logger=logger)
         if not instruction:
-            return
+            return False
         self.inject_instruction(instruction, agent=agent)
+        return True
 
     def inject_instruction(self, instruction: str, agent: Any = None) -> str:
         """Inject an instruction into the agent context and return the block."""

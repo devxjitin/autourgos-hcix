@@ -496,6 +496,46 @@ class CognitiveInterruptManager:
             logger.warning(self._registration_error)
             self._listener_warning_emitted = True
 
+    def _poll_step(self, logger: Any, pause_start: Optional[float]) -> Tuple[bool, Optional[str], Optional[float]]:
+        """One iteration of the poll/apoll state machine, sync/async-agnostic.
+
+        Returns (done, result, new_pause_start). ``done`` is False only for
+        InterruptState.WRITING -- the caller sleeps (sync ``time.sleep`` or
+        async ``asyncio.sleep``, its one actual sync/async difference) and
+        calls this again; every other state resolves immediately.
+        """
+        state = self.check_state()
+
+        if state == InterruptState.IDLE:
+            if pause_start is not None:
+                with self._lock:
+                    self.total_paused_time += time.time() - pause_start
+            return True, None, None
+
+        if state == InterruptState.WRITING:
+            if pause_start is None:
+                pause_start = time.time()
+                if logger:
+                    logger.info("Human interrupt detected. Waiting for HCIx input.")
+            return False, None, pause_start
+
+        if state == InterruptState.COMMITTED:
+            if pause_start is not None:
+                with self._lock:
+                    self.total_paused_time += time.time() - pause_start
+            instruction = self._consume_instruction()
+            with self._lock:
+                self.state = InterruptState.IDLE
+            if instruction and logger:
+                logger.info(f"Human interrupt committed: {instruction[:80]}...")
+            return True, instruction, None
+
+        if logger:
+            logger.warning(f"Unexpected HCIx state {state!r}; resetting to IDLE.")
+        with self._lock:
+            self.state = InterruptState.IDLE
+        return True, None, None
+
     def poll(self, logger: Any = None) -> Optional[str]:
         """
         Poll synchronously for a committed instruction.
@@ -505,38 +545,10 @@ class CognitiveInterruptManager:
         self._log_registration_issue(logger)
         pause_start = None
         while True:
-            state = self.check_state()
-
-            if state == InterruptState.IDLE:
-                if pause_start is not None:
-                    with self._lock:
-                        self.total_paused_time += time.time() - pause_start
-                return None
-
-            if state == InterruptState.WRITING:
-                if pause_start is None:
-                    pause_start = time.time()
-                    if logger:
-                        logger.info("Human interrupt detected. Waiting for HCIx input.")
-                time.sleep(self.poll_interval)
-                continue
-
-            if state == InterruptState.COMMITTED:
-                if pause_start is not None:
-                    with self._lock:
-                        self.total_paused_time += time.time() - pause_start
-                instruction = self._consume_instruction()
-                with self._lock:
-                    self.state = InterruptState.IDLE
-                if instruction and logger:
-                    logger.info(f"Human interrupt committed: {instruction[:80]}...")
-                return instruction
-
-            if logger:
-                logger.warning(f"Unexpected HCIx state {state!r}; resetting to IDLE.")
-            with self._lock:
-                self.state = InterruptState.IDLE
-            return None
+            done, result, pause_start = self._poll_step(logger, pause_start)
+            if done:
+                return result
+            time.sleep(self.poll_interval)
 
     async def apoll(self, logger: Any = None) -> Optional[str]:
         """
@@ -547,38 +559,10 @@ class CognitiveInterruptManager:
         self._log_registration_issue(logger)
         pause_start = None
         while True:
-            state = self.check_state()
-
-            if state == InterruptState.IDLE:
-                if pause_start is not None:
-                    with self._lock:
-                        self.total_paused_time += time.time() - pause_start
-                return None
-
-            if state == InterruptState.WRITING:
-                if pause_start is None:
-                    pause_start = time.time()
-                    if logger:
-                        logger.info("Human interrupt detected. Waiting for HCIx input.")
-                await asyncio.sleep(self.poll_interval)
-                continue
-
-            if state == InterruptState.COMMITTED:
-                if pause_start is not None:
-                    with self._lock:
-                        self.total_paused_time += time.time() - pause_start
-                instruction = self._consume_instruction()
-                with self._lock:
-                    self.state = InterruptState.IDLE
-                if instruction and logger:
-                    logger.info(f"Human interrupt committed: {instruction[:80]}...")
-                return instruction
-
-            if logger:
-                logger.warning(f"Unexpected HCIx state {state!r}; resetting to IDLE.")
-            with self._lock:
-                self.state = InterruptState.IDLE
-            return None
+            done, result, pause_start = self._poll_step(logger, pause_start)
+            if done:
+                return result
+            await asyncio.sleep(self.poll_interval)
 
     def stop(self) -> None:
         """Stop background hotkey listeners."""

@@ -152,7 +152,12 @@ class HcixInterruptMiddleware(CallbackHandler):
         agent = agent or kwargs.get("agent") or self._get_agent()
         self._log_total_pause(agent, "waiting for human interrupts")
         self._restore_system_prompt(agent)
-        if self._manager is not None:
+        # A caller-supplied manager (self._manager_owned is False) is
+        # documented as safe to share across concurrent agents -- stopping
+        # it here would permanently kill its hotkey listener thread for
+        # every other agent still sharing it, with no restart path. Only a
+        # manager this middleware created itself may be stopped.
+        if self._manager_owned and self._manager is not None:
             self._manager.stop()
 
     def on_agent_error(self, error: Exception, agent: Any = None, **kwargs: Any) -> None:
@@ -160,7 +165,7 @@ class HcixInterruptMiddleware(CallbackHandler):
         agent = agent or kwargs.get("agent") or self._get_agent()
         self._log_total_pause(agent, "waiting for human interrupts before error")
         self._restore_system_prompt(agent)
-        if self._manager is not None:
+        if self._manager_owned and self._manager is not None:
             self._manager.stop()
 
     def _get_agent(self) -> Any:

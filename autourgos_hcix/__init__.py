@@ -15,7 +15,7 @@ from .middleware import (
 
 from autourgos_core import package_version
 
-__version__ = package_version("autourgos-hcix", fallback="3.2.6")
+__version__ = package_version("autourgos-hcix", fallback="3.3.0")
 
 __all__ = [
     "CallbackHandler",

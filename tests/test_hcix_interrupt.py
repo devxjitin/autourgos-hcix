@@ -1,3 +1,4 @@
+import io
 import os
 import threading
 import unittest
@@ -9,6 +10,7 @@ from autourgos_agent.testing import make_test_agent
 from autourgos_hcix import (
     CognitiveInterruptManager,
     HcixInterruptMiddleware,
+    HumanInterrupt,
     HumanInterruptHandler,
     HumanStateEditor,
     InterruptState,
@@ -448,6 +450,116 @@ class HcixInterruptTests(unittest.TestCase):
         middleware.on_agent_start("second run", agent=agent)
 
         self.assertIs(middleware._manager, manager)
+
+    def test_human_interrupt_carries_prompt_and_state_data(self):
+        exc = HumanInterrupt("confirm this action", state_data={"step": 3})
+
+        self.assertEqual(exc.prompt, "confirm this action")
+        self.assertEqual(exc.state_data, {"step": 3})
+        self.assertEqual(str(exc), "confirm this action")
+
+    def test_human_interrupt_defaults_state_data_to_empty_dict(self):
+        exc = HumanInterrupt("confirm this action")
+
+        self.assertEqual(exc.state_data, {})
+
+    def test_interrupt_handler_is_pending_while_waiting(self):
+        handler = HumanInterruptHandler()
+        self.assertFalse(handler.is_pending)
+
+        def submit_later():
+            handler.submit("approve")
+
+        timer = threading.Timer(0.05, submit_later)
+        timer.start()
+        handler.wait_for_human(timeout=1.0)
+        timer.join()
+
+        # submit() flips the underlying event, and wait_for_human() clears
+        # _pending on return -- either way, no longer pending afterward.
+        self.assertFalse(handler.is_pending)
+
+    def test_interrupt_handler_is_pending_false_before_any_wait(self):
+        handler = HumanInterruptHandler()
+        self.assertFalse(handler.is_pending)
+
+    def test_interrupt_handler_reset_clears_pending_and_action(self):
+        handler = HumanInterruptHandler()
+        handler.submit("approve", {"x": 1})
+        handler._pending = True  # simulate a wait_for_human() that never returned
+
+        handler.reset()
+
+        self.assertFalse(handler.is_pending)
+        self.assertFalse(handler._event.is_set())
+        self.assertIsNone(handler._action)
+        self.assertEqual(handler._edits, {})
+
+    def test_interrupt_handler_timeout_returns_timeout_tuple(self):
+        handler = HumanInterruptHandler()
+        action, edits = handler.wait_for_human(timeout=0.01)
+
+        self.assertEqual(action, "timeout")
+        self.assertEqual(edits, {})
+
+    def test_state_editor_display_panel_prints_prompt_and_state(self):
+        buf = io.StringIO()
+        with patch("sys.stdout", buf):
+            HumanStateEditor.display_panel("confirm this", {"key": "value"})
+
+        output = buf.getvalue()
+        self.assertIn("confirm this", output)
+        self.assertIn("key", output)
+        self.assertIn("value", output)
+        self.assertIn("HUMAN COGNITIVE INTERRUPT", output)
+
+    def test_state_editor_display_panel_truncates_long_values(self):
+        buf = io.StringIO()
+        long_value = "x" * 100
+        with patch("sys.stdout", buf):
+            HumanStateEditor.display_panel("confirm this", {"key": long_value})
+
+        output = buf.getvalue()
+        self.assertNotIn(long_value, output)
+        self.assertIn("...", output)
+
+    def test_state_editor_prompt_user_approve(self):
+        with patch("builtins.input", return_value="a"), patch("sys.stdout", io.StringIO()):
+            action, edits = HumanStateEditor.prompt_user("confirm this", {"key": "value"})
+
+        self.assertEqual(action, "approve")
+        self.assertEqual(edits, {})
+
+    def test_state_editor_prompt_user_reject(self):
+        with patch("builtins.input", return_value="reject"), patch("sys.stdout", io.StringIO()):
+            action, edits = HumanStateEditor.prompt_user("confirm this", {"key": "value"})
+
+        self.assertEqual(action, "reject")
+        self.assertEqual(edits, {})
+
+    def test_state_editor_prompt_user_edit_parses_json_values(self):
+        # First input() selects "edit"; then one key/value pair (value is
+        # valid JSON, so parsed as an int); then an empty key ends editing.
+        with patch("builtins.input", side_effect=["e", "count", "5", ""]), \
+             patch("sys.stdout", io.StringIO()):
+            action, edits = HumanStateEditor.prompt_user("confirm this", {"key": "value"})
+
+        self.assertEqual(action, "edit")
+        self.assertEqual(edits, {"count": 5})
+
+    def test_state_editor_prompt_user_edit_falls_back_to_raw_string_on_bad_json(self):
+        with patch("builtins.input", side_effect=["edit", "note", "not json", ""]), \
+             patch("sys.stdout", io.StringIO()):
+            action, edits = HumanStateEditor.prompt_user("confirm this", {})
+
+        self.assertEqual(edits, {"note": "not json"})
+
+    def test_state_editor_prompt_user_reprompts_on_invalid_choice(self):
+        with patch("builtins.input", side_effect=["bogus", "approve"]), \
+             patch("sys.stdout", io.StringIO()):
+            action, edits = HumanStateEditor.prompt_user("confirm this", {})
+
+        self.assertEqual(action, "approve")
 
 
 if __name__ == "__main__":
